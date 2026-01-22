@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: algorithm_testing_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-algorithm_testing}
+      MYSQL_USER: ${MYSQL_USER:-alg_test}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-alg_test123}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  # 后端 API 服务
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: algorithm_testing_backend
+    restart: always
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-alg_test}:${MYSQL_PASSWORD:-alg_test123}@mysql:3306/${MYSQL_DATABASE:-algorithm_testing}
+      - DATABASE_HOST=mysql
+      - DATABASE_PORT=3306
+      - DATABASE_USER=${MYSQL_USER:-alg_test}
+      - DATABASE_PASSWORD=${MYSQL_PASSWORD:-alg_test123}
+      - DATABASE_NAME=${MYSQL_DATABASE:-algorithm_testing}
+      - USE_MYSQL=true
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key}
+      - DEBUG=${DEBUG:-true}
+    volumes:
+      - ./reports:/app/reports
+      - ./libs:/app/libs
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+      interval: 30s
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload=${DEBUG:-true}
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  # 前端服务
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: algorithm_testing_frontend
+    restart: always
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:${BACKEND_PORT:-8000}
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+volumes:
+  mysql_data:
